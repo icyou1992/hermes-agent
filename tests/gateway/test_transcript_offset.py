@@ -323,3 +323,22 @@ class TestTranscriptHistoryOffset:
         )
 
         assert merged["history_offset"] == 3
+
+    def test_recursive_queued_followup_preserves_codex_thread_id(self):
+        """Keep the live Codex thread id when the nested turn omits it."""
+        current_result = {
+            "history_offset": 2,
+            "codex_thread_id": "thread-current-123",
+        }
+        followup_result = {
+            "history_offset": 4,
+            "messages": [],
+        }
+
+        merged = _preserve_queued_followup_history_offset(
+            current_result,
+            followup_result,
+        )
+
+        assert merged["history_offset"] == 2
+        assert merged["codex_thread_id"] == "thread-current-123"

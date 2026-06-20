@@ -2351,6 +2351,8 @@ def _preserve_queued_followup_history_offset(
 
     merged = dict(followup_result)
     merged["history_offset"] = current_offset
+    if not merged.get("codex_thread_id") and current_result.get("codex_thread_id"):
+        merged["codex_thread_id"] = current_result.get("codex_thread_id")
     return merged
 
 
