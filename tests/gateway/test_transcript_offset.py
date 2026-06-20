@@ -13,7 +13,12 @@ to ``_run_agent``'s return dict and uses it for the slice.
 """
 
 
-from gateway.run import _preserve_queued_followup_history_offset
+from types import SimpleNamespace
+
+from gateway.run import (
+    _codex_thread_id_from_agent,
+    _preserve_queued_followup_history_offset,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +319,10 @@ class TestTranscriptHistoryOffset:
 
     def test_recursive_queued_followup_preserves_smaller_existing_offset(self):
         """Do not widen the slice if the nested result is already conservative."""
-        current_result = {"history_offset": 4}
+        current_result = {
+            "history_offset": 4,
+            "codex_thread_id": "thread-current-123",
+        }
         followup_result = {"history_offset": 3, "messages": []}
 
         merged = _preserve_queued_followup_history_offset(
@@ -323,6 +331,7 @@ class TestTranscriptHistoryOffset:
         )
 
         assert merged["history_offset"] == 3
+        assert merged["codex_thread_id"] == "thread-current-123"
 
     def test_recursive_queued_followup_preserves_codex_thread_id(self):
         """Keep the live Codex thread id when the nested turn omits it."""
@@ -342,3 +351,21 @@ class TestTranscriptHistoryOffset:
 
         assert merged["history_offset"] == 2
         assert merged["codex_thread_id"] == "thread-current-123"
+
+    def test_codex_thread_id_from_agent_prefers_live_session(self):
+        """The gateway should persist the currently-live Codex thread id."""
+        agent = SimpleNamespace(
+            _codex_resume_thread_id="stale-resume-thread",
+            _codex_session=SimpleNamespace(_thread_id="live-thread-123"),
+        )
+
+        assert _codex_thread_id_from_agent(agent) == "live-thread-123"
+
+    def test_codex_thread_id_from_agent_falls_back_to_resume_id(self):
+        """Timeout paths may only have the last requested resume id available."""
+        agent = SimpleNamespace(
+            _codex_resume_thread_id="resume-thread-123",
+            _codex_session=None,
+        )
+
+        assert _codex_thread_id_from_agent(agent) == "resume-thread-123"

@@ -2322,6 +2322,18 @@ def _should_clear_resume_pending_after_turn(agent_result: dict) -> bool:
     return True
 
 
+def _codex_thread_id_from_agent(agent: Any) -> Optional[str]:
+    """Return the live Codex app-server thread id from an AIAgent, if present."""
+    if agent is None or agent is _AGENT_PENDING_SENTINEL:
+        return None
+    codex_session = getattr(agent, "_codex_session", None)
+    thread_id = getattr(codex_session, "_thread_id", None) if codex_session is not None else None
+    if not thread_id:
+        thread_id = getattr(agent, "_codex_resume_thread_id", None)
+    thread_id = str(thread_id).strip() if thread_id else ""
+    return thread_id or None
+
+
 def _preserve_queued_followup_history_offset(
     current_result: dict,
     followup_result: dict,
@@ -2342,17 +2354,18 @@ def _preserve_queued_followup_history_offset(
     if not isinstance(current_result, dict):
         return followup_result
 
+    merged = dict(followup_result)
+    if not merged.get("codex_thread_id") and current_result.get("codex_thread_id"):
+        merged["codex_thread_id"] = current_result.get("codex_thread_id")
+
     current_offset = current_result.get("history_offset")
     followup_offset = followup_result.get("history_offset")
     if not isinstance(current_offset, int):
-        return followup_result
+        return merged
     if isinstance(followup_offset, int) and followup_offset <= current_offset:
-        return followup_result
+        return merged
 
-    merged = dict(followup_result)
     merged["history_offset"] = current_offset
-    if not merged.get("codex_thread_id") and current_result.get("codex_thread_id"):
-        merged["codex_thread_id"] = current_result.get("codex_thread_id")
     return merged
 
 
@@ -15961,7 +15974,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 or self._is_session_run_current(session_key, run_generation)
             )
             if session_key and _codex_run_current and isinstance(result, dict):
-                _codex_tid = result.get("codex_thread_id")
+                _codex_tid = result.get("codex_thread_id") or _codex_thread_id_from_agent(agent)
                 if _codex_tid and hasattr(self, "_session_codex_threads"):
                     self._session_codex_threads[session_key] = _codex_tid
                     try:
@@ -16578,6 +16591,25 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     "history_offset": 0,
                     "failed": True,
                 }
+                _codex_timeout_tid = _codex_thread_id_from_agent(_timed_out_agent)
+                if _codex_timeout_tid:
+                    response["codex_thread_id"] = _codex_timeout_tid
+                    _codex_run_current = (
+                        run_generation is None
+                        or self._is_session_run_current(session_key, run_generation)
+                    )
+                    if session_key and _codex_run_current and hasattr(self, "_session_codex_threads"):
+                        self._session_codex_threads[session_key] = _codex_timeout_tid
+                        try:
+                            self.session_store.set_codex_thread_id(
+                                session_key, _codex_timeout_tid
+                            )
+                        except Exception:
+                            logger.debug(
+                                "Failed to persist timed-out codex thread id for %s",
+                                session_key,
+                                exc_info=True,
+                            )
 
             # Track fallback model state: if the agent switched to a
             # fallback model during this run, persist it so /model shows
